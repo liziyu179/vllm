@@ -34,3 +34,15 @@ def length_from_prompt_token_ids_or_embeds(
                 f" prompt_embeds={prompt_embeds_len}"
             )
         return prompt_token_len
+
+import os
+
+def is_restore() -> str:
+    # return os.getenv("GRUS_SNAPSHOT_IMAGE_PATH", None)
+    return os.path.exists("/root/.grusflag")
+
+def get_containerd_id() -> str:
+    return os.getenv("SNAPSHOT_CONTAINER_ID", None)
+
+def get_pod_ip() -> str:
+    return os.getenv("POD_IP", None)
