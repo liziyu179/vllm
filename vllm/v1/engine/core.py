@@ -194,6 +194,7 @@ class EngineCore:
         import os
         ROLE = os.getenv("ROLE", None)
         logger.info(f"[snapshot] start restore the NPU snapshot. {is_restore()=} {ROLE=}")
+        time.sleep(10)
         self.do_host_snapshot()
         
         # wait for grus to start
