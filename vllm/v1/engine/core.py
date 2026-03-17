@@ -86,42 +86,6 @@ _R = TypeVar("_R")  # Return type for collective_rpc
 
 
 class EngineCore:
-
-    def do_host_snapshot(self):
-        # del tmp path (eg. ascend log)
-        try:
-            shutil.rmtree("/root/ascend/log")
-            print(f"目录 /root/ascend/log 及其所有内容已删除")
-        except OSError as e:
-            print(f"删除目录 /root/ascend/log 时出错: {e}")
-        
-        # get container_id and snapshot_image save path
-        container_id = get_containerd_id()
-        snapshot_image_save_dir = "/home/liziyu/snapshot_image/"
-        
-        # grus service url ("http+unix://{encoded_socket_path}/checkpoint")
-        socket_path = '/var/run/grus/grus.sock'
-        encoded_socket_path = urllib.parse.quote(socket_path, safe='')
-        url = f'http+unix://{encoded_socket_path}/checkpoint'
-
-       # create data
-        data = {
-            'container_id': container_id,
-            'location': snapshot_image_save_dir + container_id,
-            'timeout': 0
-        }
-
-        # post grus service
-        with requests_unixsocket.Session() as session:
-            response = session.post(url, data=data)
-            # Check response status
-            if response.status_code == 200:
-                logger.info(f"Successfully checkpointed container {container_id}")
-                logger.info(f"Response: {response.text}")
-            else:
-                logger.error(f"Failed to checkpoint container {container_id}")
-                logger.error(f"HTTP Status: {response.status_code}, Response: {response.text}")
-                
     # 快照restore之后信息刷新：1. 刷新HCCL_IF_IP环境变量的值为新调度的pod ip 2. 刷新data_parallel_master_ip的值为最新的主节点pod ip
     def after_snapshot_restore_update_info_for_core(self, hccl_if_ip: str, data_parallel_master_ip: str):
         os.environ['HCCL_IF_IP'] = hccl_if_ip
@@ -171,82 +135,6 @@ class EngineCore:
         vllm_config.cache_config.num_gpu_blocks = num_gpu_blocks
         vllm_config.cache_config.num_cpu_blocks = num_cpu_blocks
         self.collective_rpc("initialize_cache", args=(num_gpu_blocks, num_cpu_blocks))
-
-        self.collective_rpc("dump_model")
-
-        gc.collect()
-        logger.info("snapshot ------------------------ gc.collect() --------------------------- snapshot")
-        logger.info("snapshot ------------------------ reach the snapshot steady state point --------------------------- snapshot")
-        
-        logger.info("[snapshot] Synchronize all processes and all containers to the same steady state point.")
-        # TODO: Synchronize all processes and all containers to the same steady state point.
-        # exec aclrtSnapShotProcessLock()
-        self.collective_rpc("aclrt_snapshot_process_lock")
-        # exec aclrtSnapShotProcessBackup() 
-        self.collective_rpc("aclrt_snapshot_process_backup")
-
-        logger.info("[snapshot] will do host snapshot for container.")
-        # do host snapshot for container.
-        # 一个pod只需要打一次快照
-        # from vllm.distributed.parallel_state import get_world_group
-        # local_rank = get_world_group().local_rank
-        # if local_rank == 0 :
-        import os
-        ROLE = os.getenv("ROLE", None)
-        logger.info(f"[snapshot] start restore the NPU snapshot. {is_restore()=} {ROLE=}")
-        time.sleep(10)
-        self.do_host_snapshot()
-        
-        # wait for grus to start
-        time.sleep(3)
-        
-        logger.info("[snapshot] do host snapshot and npu snapshot end.")
-        
-        ROLE = os.getenv("ROLE", None)
-        # NPU restore for aclrt
-        logger.info(f"[snapshot] start restore the NPU snapshot. {is_restore()=} {ROLE=}")
-        if is_restore():
-            logger.info("[snapshot] do host restore for container.")
-            # TODO: do host restore for container.
-
-            # exec aclrtSnapShotProcessRestore()
-            self.collective_rpc("aclrt_snapshot_process_restore")
-
-        # exec aclrtSnapShotProcessUnlock()
-        self.collective_rpc("aclrt_snapshot_process_unlock")
-                
-        logger.info("Synchronize and ensure that each process completes the restore of the NPU snapshot")
-        
-        # 是否跨机判断
-        is_cross_machine =  self.vllm_config is not None and self.vllm_config.parallel_config.data_parallel_size > 1 
-        
-        if is_cross_machine and is_restore():
-            data_parallel_master_ip = get_new_dp_master_ip()
-            vllm_config.parallel_config.data_parallel_master_ip = data_parallel_master_ip
-            logger.info(f"--- new data_parallel_master_ip ---:{data_parallel_master_ip}.....")
-            pod_ip = get_pod_ip()
-            hccl_if_ip = pod_ip
-            self.after_snapshot_restore_update_info_for_core(hccl_if_ip, data_parallel_master_ip)
-            self.collective_rpc("after_snapshot_restore_update_info_for_worker",
-                                args=(hccl_if_ip, data_parallel_master_ip))
-        
-        if is_restore():
-            logger.info("--- start to rebuild process group ---")
-            self.collective_rpc("rebuild_group_lhc")
-            logger.info("--- end to rebuild process group ---")
-
-        if is_restore():
-            logger.info("--- start to reload model weight ---")
-            # reload weights
-            self.collective_rpc("re_load_weights")
-            logger.info(f"--- end to reload model weight ---env::hccl_if_ip:{os.environ['HCCL_IF_IP']}")
-            if hasattr(self, 'dp_group') and self.dp_group is not None:
-                logger.info("--- start to rebuild core process group ---")
-                stateless_destroy_torch_distributed_process_group(self.dp_group)
-                vllm_config.parallel_config.data_parallel_master_port = vllm_config.parallel_config.data_parallel_master_port + 1000
-                logger.info("--- end destroy core process group ---port : %s",vllm_config.parallel_config.data_parallel_master_port)
-                self.dp_group = vllm_config.parallel_config.stateless_init_dp_group()
-                logger.info("--- end init core process group ---")
 
         self.structured_output_manager = StructuredOutputManager(vllm_config)
 
@@ -701,6 +589,12 @@ class EngineCore:
 
     def wake_up(self, tags: list[str] | None = None):
         self.model_executor.wake_up(tags)
+
+    def suspend(self):
+        self.model_executor.suspend()
+
+    def resume(self):
+        self.model_executor.resume()
 
     def is_sleeping(self) -> bool:
         return self.model_executor.is_sleeping

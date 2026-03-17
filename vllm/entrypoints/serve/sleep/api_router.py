@@ -48,6 +48,22 @@ async def is_sleeping(raw_request: Request):
     is_sleeping = await engine_client(raw_request).is_sleeping()
     return JSONResponse(content={"is_sleeping": is_sleeping})
 
+@router.post("/suspend")
+async def suspend(raw_request: Request):
+    # get POST params
+    await engine_client(raw_request).suspend()
+    # FIXME: in v0 with frontend multiprocessing, the sleep command
+    # is sent but does not finish yet when we return a response.
+    return Response(status_code=200)
+
+@router.post("/resume")
+async def resume(raw_request: Request):
+    # get POST params
+    await engine_client(raw_request).resume()
+    # FIXME: in v0 with frontend multiprocessing, the sleep command
+    # is sent but does not finish yet when we return a response.
+    return Response(status_code=200)
+
 
 def attach_router(app: FastAPI):
     if not envs.VLLM_SERVER_DEV_MODE:

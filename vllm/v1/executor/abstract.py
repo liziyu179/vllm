@@ -5,7 +5,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import Future
 from functools import cached_property
+import gc
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
+import shutil
 
 from vllm.config import VllmConfig
 from vllm.distributed.kv_transfer.kv_connector.utils import KVOutputAggregator
@@ -21,6 +23,7 @@ from vllm.v1.engine import ReconfigureDistributedRequest
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import DraftTokenIds, ModelRunnerOutput
 from vllm.v1.worker.worker_base import WorkerBase
+from vllm.utils import is_restore
 
 if TYPE_CHECKING:
     from vllm.distributed.kv_transfer.kv_connector.base import KVConnectorBase
@@ -101,6 +104,7 @@ class Executor(ABC):
         self._init_executor()
         self.is_sleeping = False
         self.sleeping_tags: set[str] = set()
+        self.is_suspend = False
         self.kv_output_aggregator: KVOutputAggregator | None = None
 
     @abstractmethod
@@ -333,6 +337,62 @@ class Executor(ABC):
             self.sleeping_tags.clear()
         if not self.sleeping_tags:
             self.is_sleeping = False
+
+    def suspend(self):
+        if self.is_suspend:
+            logger.warning("Executor is already suspend.")
+            return
+        time_before_suspend = time.perf_counter()
+        # self.collective_rpc("suspend")
+        logger.info(f"[snapshot] [engine] " + "-"*20 + "start dump model" + "-"*20)
+        self.collective_rpc("dump_model")
+
+        logger.info(f"[snapshot] [engine] " + "-"*20 + "gc.collect()" + "-"*20)
+        gc.collect()
+
+        logger.info(f"[snapshot] [engine] " + "-"*20 + "aclrt_snapshot_process_lock" + "-"*20)
+        self.collective_rpc("aclrt_snapshot_process_lock")
+
+        logger.info(f"[snapshot] [engine] " + "-"*20 + "aclrt_snapshot_process_backup" + "-"*20)
+        self.collective_rpc("aclrt_snapshot_process_backup")
+
+        # 删除临时路径（如 ascend 日志）
+        try:
+            shutil.rmtree("/root/ascend/log")
+            print(f"目录 /root/ascend/log 及其所有内容已删除")
+        except OSError as e:
+            error_msg = f"删除目录 /root/ascend/log 时出错: {e}"
+            print(error_msg)
+        time_after_suspend = time.perf_counter()
+        self.is_suspend = True
+        logger.info(
+            "It took %.6f seconds to fall suspend.", time_after_suspend - time_before_suspend
+        )
+
+    def resume(self):
+        if not self.is_suspend:
+            logger.warning("Executor is not sleeping.")
+            return
+        time_before_resume = time.perf_counter()
+        # self.collective_rpc("resume")
+        if is_restore():
+            logger.info(f"[snapshot] [engine] " + "-"*20 + "aclrt_snapshot_process_restore" + "-"*20)
+            self.collective_rpc("aclrt_snapshot_process_restore")
+
+            logger.info(f"[snapshot] [engine] " + "-"*20 + "aclrt_snapshot_process_unlock" + "-"*20)
+            self.collective_rpc("aclrt_snapshot_process_unlock")
+
+            logger.info(f"[snapshot] [engine] " + "-"*20 + "rebuild_group_lhc" + "-"*20)
+            self.collective_rpc("rebuild_group_lhc")
+
+            logger.info(f"[snapshot] [engine] " + "-"*20 + "re_load_weights" + "-"*20)
+            self.collective_rpc("re_load_weights")
+        time_after_resume = time.perf_counter()
+        logger.info(
+            "It took %.6f seconds to resume.",
+            time_after_resume - time_before_resume,
+        )
+        self.is_suspend = False
 
     def reinitialize_distributed(
         self, reconfig_request: ReconfigureDistributedRequest

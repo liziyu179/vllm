@@ -225,6 +225,12 @@ class EngineCoreClient(ABC):
 
     async def wake_up_async(self, tags: list[str] | None = None) -> None:
         raise NotImplementedError
+    
+    async def suspend_async(self) -> None:
+        raise NotImplementedError
+
+    async def resume_async(self) -> None:
+        raise NotImplementedError
 
     async def is_sleeping_async(self) -> bool:
         raise NotImplementedError
@@ -994,6 +1000,12 @@ class AsyncMPClient(MPClient):
 
     async def wake_up_async(self, tags: list[str] | None = None) -> None:
         await self.call_utility_async("wake_up", tags)
+
+    async def suspend_async(self) -> None:
+        await self.call_utility_async("suspend")
+
+    async def resume_async(self) -> None:
+        await self.call_utility_async("resume")
 
     async def is_sleeping_async(self) -> bool:
         return await self.call_utility_async("is_sleeping")
