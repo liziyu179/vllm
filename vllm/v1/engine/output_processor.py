@@ -624,9 +624,14 @@ class OutputProcessor:
                 assert req_state.detokenizer is not None
                 assert req_state.logprobs_processor is not None
                 # 2) Detokenize the token ids into text and perform stop checks.
-                stop_string = req_state.detokenizer.update(
-                    new_token_ids, finish_reason == FinishReason.STOP
-                )
+                # Recompute outputs carry already-emitted token ids so the
+                # OpenAI layer can return them to the proxy. Do not feed them
+                # through the detokenizer again, or text/token state is doubled.
+                stop_string = None
+                if stop_reason != "recomputed":
+                    stop_string = req_state.detokenizer.update(
+                        new_token_ids, finish_reason == FinishReason.STOP
+                    )
                 if stop_string:
                     finish_reason = FinishReason.STOP
                     stop_reason = stop_string

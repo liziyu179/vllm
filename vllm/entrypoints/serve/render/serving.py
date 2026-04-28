@@ -179,6 +179,18 @@ class OpenAIServingRender:
         Called directly by render_chat_request and delegated to by
         OpenAIServingChat.render_chat_request after its engine-aware checks.
         """
+        if prompt_token_ids := getattr(request, "prompt_token_ids", None):
+            engine_prompts = await self.renderer.render_cmpl_async(
+                [TokensPrompt(prompt_token_ids=prompt_token_ids)],
+                request.build_tok_params(self.model_config),
+                prompt_extras={
+                    k: v
+                    for k in ("cache_salt",)
+                    if (v := getattr(request, k, None)) is not None
+                },
+            )
+            return [], engine_prompts
+
         tokenizer = self.renderer.tokenizer
 
         tool_parser = self.tool_parser

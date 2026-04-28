@@ -785,3 +785,21 @@ class ChatCompletionRequest(OpenAIBaseModel):
         if data.get("reasoning_effort") == "none":
             data["include_reasoning"] = False
         return data
+
+
+class ChatCompletionTokenIdsRequest(ChatCompletionRequest):
+    """Chat completion request that accepts already-rendered prompt tokens."""
+
+    messages: list[ChatCompletionMessageParam] = Field(default_factory=list)
+    prompt_token_ids: list[Annotated[int, Field(ge=0)]] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_token_ids_request(cls, data):
+        if data.get("add_generation_prompt") is False:
+            raise VLLMValidationError(
+                "`add_generation_prompt=false` is not supported with "
+                "prompt_token_ids because no final message role is available.",
+                parameter="add_generation_prompt",
+            )
+        return data

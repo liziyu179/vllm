@@ -361,6 +361,18 @@ class OpenAIServingChat(OpenAIServing):
         return request.messages[-1]["role"]
 
     @staticmethod
+    def _get_token_ids_for_response(
+        request: ChatCompletionRequest,
+        output_token_ids: GenericSequence[int],
+        prompt_token_ids: list[int] | None,
+        stop_reason: int | str | None,
+    ) -> list[int] | None:
+        if stop_reason == "recomputed":
+            return [*(prompt_token_ids or []), *as_list(output_token_ids)]
+
+        return as_list(output_token_ids) if request.return_token_ids else None
+
+    @staticmethod
     def _bracket_level(s: str, opening="{", closing="}") -> int:
         """
         Calculate the current level of nested brackets in a given string.
@@ -1077,9 +1089,12 @@ class OpenAIServingChat(OpenAIServing):
                             logprobs=logprobs,
                             finish_reason=None,
                             token_ids=(
-                                as_list(output.token_ids)
-                                if request.return_token_ids
-                                else None
+                                self._get_token_ids_for_response(
+                                    request,
+                                    output.token_ids,
+                                    res.prompt_token_ids,
+                                    output.stop_reason,
+                                )
                             ),
                         )
 
@@ -1177,9 +1192,12 @@ class OpenAIServingChat(OpenAIServing):
                             finish_reason=finish_reason_,
                             stop_reason=output.stop_reason,
                             token_ids=(
-                                as_list(output.token_ids)
-                                if request.return_token_ids
-                                else None
+                                self._get_token_ids_for_response(
+                                    request,
+                                    output.token_ids,
+                                    res.prompt_token_ids,
+                                    output.stop_reason,
+                                )
                             ),
                         )
 
@@ -1369,7 +1387,12 @@ class OpenAIServingChat(OpenAIServing):
                     ),
                     stop_reason=output.stop_reason,
                     token_ids=(
-                        as_list(output.token_ids) if request.return_token_ids else None
+                        self._get_token_ids_for_response(
+                            request,
+                            output.token_ids,
+                            final_res.prompt_token_ids,
+                            output.stop_reason,
+                        )
                     ),
                 )
                 choices.append(choice_data)
@@ -1568,7 +1591,12 @@ class OpenAIServingChat(OpenAIServing):
                 else "stop",
                 stop_reason=output.stop_reason,
                 token_ids=(
-                    as_list(output.token_ids) if request.return_token_ids else None
+                    self._get_token_ids_for_response(
+                        request,
+                        output.token_ids,
+                        final_res.prompt_token_ids,
+                        output.stop_reason,
+                    )
                 ),
             )
             choice_data = maybe_filter_parallel_tool_calls(choice_data, request)
